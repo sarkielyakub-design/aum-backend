@@ -23,8 +23,8 @@ from sqlalchemy.orm import Session
 
 from app.config import BACKEND_URL
 from app.db.session import get_db
-from app.models.volunteer import Volunteer
 from app.models.location import PollingUnit, Ward
+from app.models.volunteer import Volunteer
 from app.services.registration_service import generate_registration_no
 from app.utils.membership_card_generator import generate_membership_card
 
@@ -137,9 +137,7 @@ def relative_path(
 # CLEANUP FILES
 # ============================================================
 
-def _cleanup(
-    paths,
-):
+def _cleanup(paths):
     """
     Delete generated files when registration fails.
     """
@@ -160,13 +158,24 @@ def _cleanup(
                 absolute.unlink()
 
         except OSError:
-
             pass
 
 
-def _location_payload(polling_unit: PollingUnit, member_count: int = 0):
-    """Return the canonical location values used by registration clients."""
+# ============================================================
+# LOCATION RESPONSE
+# ============================================================
+
+def _location_payload(
+    polling_unit: PollingUnit,
+    member_count: int = 0,
+):
+    """
+    Return the canonical location values used
+    by registration clients.
+    """
+
     ward = polling_unit.ward
+
     return {
         "id": polling_unit.id,
         "code": polling_unit.code,
@@ -174,10 +183,22 @@ def _location_payload(polling_unit: PollingUnit, member_count: int = 0):
         "sequence_no": polling_unit.sequence_no,
         "target_members": polling_unit.target_members,
         "registered_members": member_count,
-        "remaining_members": max(polling_unit.target_members - member_count, 0),
-        "ward": {"id": ward.id, "name": ward.name, "lga": ward.lga, "state": ward.state},
+        "remaining_members": max(
+            polling_unit.target_members - member_count,
+            0,
+        ),
+        "ward": {
+            "id": ward.id,
+            "name": ward.name,
+            "lga": ward.lga,
+            "state": ward.state,
+        },
     }
 
+
+# ============================================================
+# RESOLVE POLLING UNIT
+# ============================================================
 
 def _resolve_polling_unit(
     db: Session,
@@ -186,72 +207,256 @@ def _resolve_polling_unit(
     ward: str,
     unit: str,
 ) -> PollingUnit:
-    """Resolve a submitted location, including compatible legacy form fields."""
-    query = db.query(PollingUnit).join(Ward)
+    """
+    Resolve a submitted location.
+
+    New registrations must use an existing authoritative
+    polling unit from the imported location database.
+
+    Legacy lga / ward / unit string fields are still supported.
+    """
+
+    query = (
+        db.query(PollingUnit)
+        .join(Ward)
+    )
+
+    # --------------------------------------------------------
+    # Resolve by polling-unit ID
+    # --------------------------------------------------------
 
     if polling_unit_id is not None:
-        polling_unit = query.filter(PollingUnit.id == polling_unit_id).first()
+
+        polling_unit = (
+            query
+            .filter(
+                PollingUnit.id == polling_unit_id
+            )
+            .first()
+        )
+
         if not polling_unit:
-            raise HTTPException(status_code=422, detail="Selected polling unit does not exist.")
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Selected polling unit does not exist."
+                ),
+            )
+
         location_ward = polling_unit.ward
-        checks = ((lga, location_ward.lga, "LGA"), (ward, location_ward.name, "ward"))
+
+        checks = (
+            (
+                lga,
+                location_ward.lga,
+                "LGA",
+            ),
+            (
+                ward,
+                location_ward.name,
+                "ward",
+            ),
+        )
+
         for submitted, canonical, label in checks:
-            if submitted and submitted.strip().casefold() != canonical.casefold():
-                raise HTTPException(status_code=422, detail=f"Selected polling unit does not belong to the submitted {label}.")
-        if unit and unit.strip().casefold() not in {polling_unit.name.casefold(), polling_unit.code.casefold()}:
-            raise HTTPException(status_code=422, detail="Selected polling unit does not match the submitted unit.")
+
+            if (
+                submitted
+                and submitted.strip().casefold()
+                != canonical.casefold()
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Selected polling unit does not "
+                        f"belong to the submitted {label}."
+                    ),
+                )
+
+        if (
+            unit
+            and unit.strip().casefold()
+            not in {
+                polling_unit.name.casefold(),
+                polling_unit.code.casefold(),
+            }
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Selected polling unit does not "
+                    "match the submitted unit."
+                ),
+            )
+
         return polling_unit
 
-    # Existing forms send lga/ward/unit strings. Resolve them only when they
-    # exactly match imported data; never create geography from a registration.
-    if not all((lga.strip(), ward.strip(), unit.strip())):
-        raise HTTPException(status_code=422, detail="A valid ward and polling unit selection is required.")
+    # --------------------------------------------------------
+    # Legacy string-based resolution
+    # --------------------------------------------------------
+
+    if not all(
+        (
+            lga.strip(),
+            ward.strip(),
+            unit.strip(),
+        )
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "A valid ward and polling unit "
+                "selection is required."
+            ),
+        )
 
     polling_unit = (
-        query.filter(
-            func.lower(Ward.lga) == lga.strip().lower(),
-            func.lower(Ward.name) == ward.strip().lower(),
+        query
+        .filter(
+            func.lower(Ward.lga)
+            == lga.strip().lower(),
+
+            func.lower(Ward.name)
+            == ward.strip().lower(),
+
             or_(
-                func.lower(PollingUnit.name) == unit.strip().lower(),
-                func.lower(PollingUnit.code) == unit.strip().lower(),
+                func.lower(PollingUnit.name)
+                == unit.strip().lower(),
+
+                func.lower(PollingUnit.code)
+                == unit.strip().lower(),
             ),
         )
         .first()
     )
+
     if not polling_unit:
+
         raise HTTPException(
             status_code=422,
-            detail="Polling unit was not found in the imported ward data. Select a listed polling unit.",
+            detail=(
+                "Polling unit was not found in the "
+                "imported ward data. Select a listed "
+                "polling unit."
+            ),
         )
+
     return polling_unit
 
 
 # ============================================================
-# PUBLIC LOCATION LOOKUPS (used by registration forms)
+# PUBLIC LOCATION LOOKUPS
 # ============================================================
 
+
+
+
+# ============================================================
+# GET WARDS BY LGA
+# ============================================================
+
+@router.get("/locations/lgas")
+def registration_lgas(
+    db: Session = Depends(get_db),
+):
+    lgas = (
+        db.query(Ward.lga)
+        .filter(Ward.lga.isnot(None))
+        .distinct()
+        .order_by(Ward.lga)
+        .all()
+    )
+
+    return {
+        "data": [item[0] for item in lgas]
+    }
+
+
 @router.get("/locations/wards")
-def registration_wards(lga: str, db: Session = Depends(get_db)):
+def registration_wards(
+    lga: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Return all wards belonging to the selected LGA.
+    """
+
     wards = (
         db.query(Ward)
-        .filter(func.lower(Ward.lga) == lga.strip().lower())
-        .order_by(Ward.name)
+        .filter(
+            func.lower(Ward.lga)
+            == lga.strip().lower()
+        )
+        .order_by(
+            Ward.name
+        )
         .all()
     )
-    return {"lga": lga.strip(), "data": [{"id": item.id, "name": item.name, "state": item.state} for item in wards]}
 
+    return {
+        "lga": lga.strip(),
+
+        "data": [
+            {
+                "id": item.id,
+                "name": item.name,
+                "state": item.state,
+            }
+            for item in wards
+        ],
+    }
+
+
+# ============================================================
+# GET POLLING UNITS BY WARD
+# ============================================================
 
 @router.get("/locations/polling-units")
-def registration_polling_units(ward_id: int, db: Session = Depends(get_db)):
+def registration_polling_units(
+    ward_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Return all polling units belonging to the selected ward.
+    """
+
     rows = (
-        db.query(PollingUnit, func.count(Volunteer.id).label("member_count"))
-        .outerjoin(Volunteer, Volunteer.polling_unit_id == PollingUnit.id)
-        .filter(PollingUnit.ward_id == ward_id)
-        .group_by(PollingUnit.id)
-        .order_by(PollingUnit.sequence_no, PollingUnit.code)
+        db.query(
+            PollingUnit,
+            func.count(
+                Volunteer.id
+            ).label("member_count"),
+        )
+        .outerjoin(
+            Volunteer,
+            Volunteer.polling_unit_id
+            == PollingUnit.id,
+        )
+        .filter(
+            PollingUnit.ward_id
+            == ward_id
+        )
+        .group_by(
+            PollingUnit.id
+        )
+        .order_by(
+            PollingUnit.sequence_no,
+            PollingUnit.code,
+        )
         .all()
     )
-    return {"ward_id": ward_id, "data": [_location_payload(item, count) for item, count in rows]}
+
+    return {
+        "ward_id": ward_id,
+
+        "data": [
+            _location_payload(
+                item,
+                count,
+            )
+            for item, count in rows
+        ],
+    }
 
 
 # ============================================================
@@ -326,9 +531,18 @@ async def register_volunteer(
 
     try:
 
-        # Resolve the selection before creating uploads or a member record.
-        # This ensures every new registration is assigned to imported geography.
-        polling_unit = _resolve_polling_unit(db, polling_unit_id, lga, ward, unit)
+        # ====================================================
+        # RESOLVE AUTHORITATIVE LOCATION
+        # ====================================================
+
+        polling_unit = _resolve_polling_unit(
+            db,
+            polling_unit_id,
+            lga,
+            ward,
+            unit,
+        )
+
         location_ward = polling_unit.ward
 
         # ====================================================
@@ -338,7 +552,6 @@ async def register_volunteer(
         registration_no = (
             generate_registration_no(db)
         )
-
 
         # ====================================================
         # READ PASSPORT
@@ -354,7 +567,6 @@ async def register_volunteer(
                 status_code=400,
                 detail="Passport image is empty.",
             )
-
 
         # ====================================================
         # PROCESS PASSPORT
@@ -405,7 +617,6 @@ async def register_volunteer(
                 ),
             ) from exc
 
-
         # ====================================================
         # GENERATE QR CODE
         # ====================================================
@@ -433,7 +644,6 @@ async def register_volunteer(
             qr_file
         )
 
-
         # ====================================================
         # CREATE VOLUNTEER
         # ====================================================
@@ -454,6 +664,7 @@ async def register_volunteer(
 
             age=age,
 
+            # Canonical location values
             lga=location_ward.lga,
 
             ward=location_ward.name,
@@ -511,7 +722,6 @@ async def register_volunteer(
             ),
         )
 
-
         # ====================================================
         # SAVE VOLUNTEER
         # ====================================================
@@ -525,7 +735,6 @@ async def register_volunteer(
         db.refresh(
             volunteer
         )
-
 
         # ====================================================
         # GENERATE MEMBERSHIP CARD
@@ -542,7 +751,6 @@ async def register_volunteer(
             card_file
         )
 
-
         # ====================================================
         # SAVE CARD PATH
         # ====================================================
@@ -556,7 +764,6 @@ async def register_volunteer(
         db.refresh(
             volunteer
         )
-
 
         # ====================================================
         # SUCCESS RESPONSE
@@ -614,7 +821,6 @@ async def register_volunteer(
             ),
         }
 
-
     # ========================================================
     # EXPECTED HTTP ERROR
     # ========================================================
@@ -649,7 +855,6 @@ async def register_volunteer(
                 db.rollback()
 
         raise
-
 
     # ========================================================
     # UNEXPECTED ERROR
@@ -1036,7 +1241,6 @@ def download_volunteer_card(
             ),
         )
 
-
     # ========================================================
     # EXISTING CARD
     # ========================================================
@@ -1057,7 +1261,6 @@ def download_volunteer_card(
             else Path(card_path)
         )
 
-
     # ========================================================
     # GENERATE CARD IF MISSING
     # ========================================================
@@ -1075,7 +1278,6 @@ def download_volunteer_card(
                 BASE_DIR
                 / volunteer.qr_code
             )
-
 
         generated = Path(
             generate_membership_card(
@@ -1096,7 +1298,6 @@ def download_volunteer_card(
         db.commit()
 
         absolute = generated
-
 
     # ========================================================
     # RETURN PDF
