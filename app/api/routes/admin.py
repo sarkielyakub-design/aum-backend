@@ -250,30 +250,107 @@ def polling_unit_summary(polling_unit, count):
         },
     }
 
-
 @router.get("/polling-units")
 def polling_units(
     lga: Optional[str] = None,
     ward_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    """Administrative unit list with each unit's separate member count."""
+    """
+    Administrative polling-unit list.
+
+    Returns every polling unit together with:
+    - ward
+    - LGA
+    - state
+    - target members
+    - registered members
+    - remaining capacity
+    """
+
     query = (
-        db.query(PollingUnit, func.count(Volunteer.id).label("member_count"))
-        .join(Ward)
-        .outerjoin(Volunteer, Volunteer.polling_unit_id == PollingUnit.id)
+        db.query(
+            PollingUnit,
+            Ward,
+            func.count(Volunteer.id).label("member_count"),
+        )
+        .select_from(PollingUnit)
+        .join(
+            Ward,
+            PollingUnit.ward_id == Ward.id,
+        )
+        .outerjoin(
+            Volunteer,
+            Volunteer.polling_unit_id == PollingUnit.id,
+        )
     )
+
+    # -----------------------------
+    # FILTERS
+    # -----------------------------
+
     if lga:
-        query = query.filter(Ward.lga.ilike(lga.strip()))
+        query = query.filter(
+            Ward.lga.ilike(lga.strip())
+        )
+
     if ward_id:
-        query = query.filter(PollingUnit.ward_id == ward_id)
+        query = query.filter(
+            PollingUnit.ward_id == ward_id
+        )
+
+    # -----------------------------
+    # GROUPING
+    # -----------------------------
+
     rows = (
-        query.group_by(PollingUnit.id)
-        .order_by(Ward.lga, Ward.name, PollingUnit.sequence_no, PollingUnit.code)
+        query
+        .group_by(
+            PollingUnit.id,
+            Ward.id,
+        )
+        .order_by(
+            Ward.lga,
+            Ward.name,
+            PollingUnit.sequence_no,
+            PollingUnit.code,
+        )
         .all()
     )
-    return {"count": len(rows), "data": [polling_unit_summary(unit, count) for unit, count in rows]}
 
+    # -----------------------------
+    # RESPONSE
+    # -----------------------------
+
+    data = []
+
+    for polling_unit, ward, member_count in rows:
+        target = polling_unit.target_members or 200
+        registered = member_count or 0
+        remaining = max(target - registered, 0)
+
+        data.append({
+            "id": polling_unit.id,
+            "code": polling_unit.code,
+            "name": polling_unit.name,
+            "sequence_no": polling_unit.sequence_no,
+
+            "target_members": target,
+            "registered_members": registered,
+            "remaining_members": remaining,
+
+            "ward": {
+                "id": ward.id,
+                "name": ward.name,
+                "lga": ward.lga,
+                "state": ward.state,
+            },
+        })
+
+    return {
+        "count": len(data),
+        "data": data,
+    }
 
 @router.get("/polling-units/{polling_unit_id}/members")
 def polling_unit_members(polling_unit_id: int, db: Session = Depends(get_db)):
