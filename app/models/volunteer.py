@@ -17,23 +17,54 @@ class Volunteer(Base):
         index=True,
     )
 
-    # Uploaded files
+    # ============================================================
+    # UPLOADED FILES
+    # ============================================================
+
     passport = Column(String(500))
     qr_code = Column(String(500))
     id_card = Column(String(500))
 
-    # Personal information
+    # ============================================================
+    # PERSONAL INFORMATION
+    # ============================================================
+
     name = Column(String(255), nullable=False)
     phone = Column(String(30), nullable=False)
     gender = Column(String(20))
     age = Column(Integer)
 
-    # Legacy location fields are retained for exports, cards, and existing clients.
-    # New registrations are linked to the authoritative location tables below.
+    # ============================================================
+    # VOTER INFORMATION
+    # ============================================================
+
+    voter_card_number = Column(
+        String(100),
+        nullable=True,
+        index=True,
+    )
+
+    # ============================================================
+    # LOCATION INFORMATION
+    # ============================================================
+
+    # Legacy location fields are retained for exports,
+    # membership cards, and existing clients.
+    #
+    # New registrations are linked to the authoritative
+    # Ward and PollingUnit tables below.
+
     lga = Column(String(100))
     ward = Column(String(100))
     unit = Column(String(100))
-    ward_id = Column(Integer, ForeignKey("wards.id"), index=True, nullable=True)
+
+    ward_id = Column(
+        Integer,
+        ForeignKey("wards.id"),
+        index=True,
+        nullable=True,
+    )
+
     polling_unit_id = Column(
         Integer,
         ForeignKey("polling_units.id"),
@@ -41,25 +72,57 @@ class Volunteer(Base):
         nullable=True,
     )
 
-    ward_location = relationship("Ward", back_populates="volunteers")
-    polling_unit = relationship("PollingUnit", back_populates="volunteers")
+    ward_location = relationship(
+        "Ward",
+        back_populates="volunteers",
+    )
 
-    # Education
+    polling_unit = relationship(
+        "PollingUnit",
+        back_populates="volunteers",
+    )
+
+    # ============================================================
+    # EDUCATION
+    # ============================================================
+
     highest_qualification = Column(String(255))
     additional_qualification = Column(String(255))
     specialization = Column(String(255))
 
-    # Employment
+    # ============================================================
+    # EMPLOYMENT
+    # ============================================================
+
     employment_status = Column(String(100))
 
-    # Optional accessibility information
-    physically_challenged = Column(Boolean, default=False, nullable=False)
+    # ============================================================
+    # ACCESSIBILITY
+    # ============================================================
 
-    # Movement information
-    aum_member = Column(Boolean, default=False, nullable=False)
+    physically_challenged = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    # ============================================================
+    # MOVEMENT INFORMATION
+    # ============================================================
+
+    aum_member = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
     previous_organization = Column(String(255))
     position = Column(String(255))
     expectation = Column(Text)
+
+    # ============================================================
+    # TIMESTAMPS
+    # ============================================================
 
     created_at = Column(
         DateTime(timezone=True),

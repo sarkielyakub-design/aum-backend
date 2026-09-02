@@ -655,14 +655,21 @@ async def register_volunteer(
             passport=passport_path,
 
             qr_code=qr_path,
+name=name.strip(),
 
-            name=name.strip(),
+phone=phone.strip(),
 
-            phone=phone.strip(),
+gender=gender.strip(),
 
-            gender=gender.strip(),
+age=age,
 
-            age=age,
+voter_card_number=(
+    voter_card_number.strip()
+    if voter_card_number
+    else None
+),
+
+
 
             # Canonical location values
             lga=location_ward.lga,
